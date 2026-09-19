@@ -24,6 +24,11 @@ Optional TUI (`python3 metatool.py` with no subcommand):
 pip install --user --break-system-packages textual
 ```
 
+In the TUI, press **Check** to scan files. Results appear as a collapsible
+tree: each file is a node you can click to open/close, with every metadata
+field listed as a child row and findings (flags) nested under a `findings`
+node. The log panel below shows scan status and `clean` output.
+
 ## Usage
 
 ```bash

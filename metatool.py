@@ -191,10 +191,10 @@ def check_pdf(path):
     return props, findings
 
 
-def analyze(path_str):
+def analyze(path_str: str) -> dict:
     path = Path(path_str)
     if not path.exists():
-        return {"file": path_str, "error": "file not found"}
+        return {"file": path_str, "error": "file not found", "properties": {}, "findings": []}
 
     ext = path.suffix.lower()
     try:
@@ -203,9 +203,9 @@ def analyze(path_str):
         elif ext == ".pdf":
             props, findings = check_pdf(path)
         else:
-            return {"file": str(path), "error": f"unsupported extension '{ext}'"}
+            return {"file": str(path), "error": f"unsupported extension '{ext}'", "properties": {}, "findings": []}
     except Exception as e:
-        return {"file": str(path), "error": str(e)}
+        return {"file": str(path), "error": str(e), "properties": {}, "findings": []}
 
     return {"file": str(path), "properties": props, "findings": findings}
 
@@ -359,7 +359,7 @@ def interactive():
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Horizontal, Vertical
-        from textual.widgets import Input, Button, RichLog
+        from textual.widgets import Input, Button, RichLog, Tree
         from textual import on
     except ImportError:
         print("Install textual for the TUI: pip install --user --break-system-packages textual")
@@ -367,7 +367,8 @@ def interactive():
 
     class MetatoolApp(App):
         CSS = """
-        #log { height: 1fr; border: round $accent; }
+        #log { height: 10; border: round $accent; }
+        #tree { height: 1fr; border: round $accent; }
         #bar { height: 3; }
         #paths { width: 1fr; }
         #author_in { width: 1fr; }
@@ -375,7 +376,7 @@ def interactive():
 
         def compose(self) -> ComposeResult:
             with Vertical():
-                yield RichLog(id="log", highlight=True, markup=True, wrap=True)
+                yield Tree("results", id="tree")
                 with Horizontal(id="bar"):
                     yield Input(placeholder="paths (blank = files/)", id="paths")
                     yield Input(placeholder="author (blank = generic)", id="author_in")
@@ -396,12 +397,35 @@ def interactive():
         @on(Button.Pressed, "#check")
         def do_check(self) -> None:
             log = self.query_one("#log", RichLog)
-            paths = self._paths()
-            log.write(f"[bold]check[/bold] {paths}")
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                run_check(paths, as_json=False)
-            log.write(buf.getvalue() or "(no output)")
+            tree = self.query_one("#tree", Tree)
+            tree.clear()
+            targets = collect_files(self._paths())
+            if not targets:
+                log.write("[yellow]no supported files found[/yellow]")
+                return
+            for f in targets:
+                res = analyze(str(f))
+                fname = Path(res["file"]).name
+                if "error" in res:
+                    node = tree.root.add(f"[red]{fname}[/red] — {res['error']}")
+                    continue
+                n_props = len(res["properties"])
+                n_high = sum(1 for x in res["findings"] if x["level"] == "high")
+                node = tree.root.add(
+                    f"[bold]{fname}[/bold] ({n_props} fields, {n_high} high flags)",
+                    expand=False,
+                )
+                for k, v in res["properties"].items():
+                    val = (v[:200] + "…") if k == "xmp_raw" and len(v) > 200 else v
+                    node.add_leaf(f"{k}: {val}")
+                if res["findings"]:
+                    fnode = node.add("findings")
+                    order = {"high": 0, "med": 1, "low": 2, "warn": 3}
+                    for x in sorted(res["findings"], key=lambda y: order.get(y["level"], 9)):
+                        fnode.add_leaf(f"[{x['level'].upper()}] {x['message']}")
+                else:
+                    node.add_leaf("[green]no suspicious signals[/green]")
+            log.write(f"[bold]check[/bold] {len(targets)} file(s) — click file rows to expand/collapse")
 
         @on(Button.Pressed, "#clean")
         def do_clean(self) -> None:
