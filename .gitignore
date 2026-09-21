@@ -1,6 +1,7 @@
 files/*
 !files/.gitkeep
 results/
+build/
 *-clean.docx
 *-clean.pdf
 __pycache__/

@@ -1,127 +1,224 @@
 # MetaTool
 
-MetaTool inspects and sanitizes metadata in OOXML documents (`.docx`, `.xlsx`,
-and `.pptx`) and PDFs. It reports metadata as evidence: application and library
-metadata can show that a tool participated in a document's creation or
-modification, but cannot prove how its content was authored.
+MetaTool is a command-line utility for inspecting, sanitizing, and validating
+metadata in OOXML documents and PDF files. It reports metadata as evidence: a
+creator, application, or producer value can indicate that a tool participated
+in a document's creation or modification, but it cannot prove who authored the
+document's content.
 
-## Install
+## Contents
 
-For normal use, install in an isolated environment:
+- [What it does](#what-it-does)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Sanitization profiles](#sanitization-profiles)
+- [Supported formats](#supported-formats)
+- [Safety and privacy](#safety-and-privacy)
+- [Automation](#automation)
+- [Development](#development)
+- [Limitations](#limitations)
 
-```bash
-pipx install metatool
+## What it does
+
+- Inspects DOCX, XLSX, PPTX, and PDF metadata.
+- Reports structured findings with human-readable Rich output or JSON.
+- Removes privacy-sensitive metadata deterministically.
+- Preserves unrelated metadata whenever the selected profile allows it.
+- Validates sanitized documents before they are moved into place.
+- Provides an optional Textual terminal interface.
+
+## Installation
+
+Run these commands from the repository root. Installing with `.` is important:
+it selects this checkout instead of a similarly named package from the public
+Python Package Index.
+
+### Isolated command-line installation
+
+```powershell
+pipx install .
 ```
 
-For development:
+To include the optional terminal interface:
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate  # Windows
+```powershell
+pipx install ".[tui]"
+```
+
+### Development installation
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev,tui]"
 ```
 
-Do not use `--break-system-packages` as a normal installation method.
+On macOS or Linux, activate the environment with:
+
+```bash
+source .venv/bin/activate
+python -m pip install -e ".[dev,tui]"
+```
+
+Do not use `--break-system-packages` for normal installation. If an old
+installation was created from the public package index, remove it first:
+
+```powershell
+pipx uninstall metatool
+pipx install .
+```
+
+## Quick start
+
+```powershell
+# Inspect a document with human-readable output
+metatool inspect report.docx
+
+# Preview privacy changes without creating an output file
+metatool sanitize report.docx --profile privacy --dry-run
+
+# Create a separate, validated sanitized document
+metatool sanitize report.docx --profile privacy --output report-clean.docx
+
+# Confirm the resulting document is structurally valid
+metatool validate report-clean.docx
+```
+
+The source file is never silently overwritten. By default, sanitization writes
+`<name>-clean<extension>` beside the source document.
 
 ## Commands
 
-```bash
-# Rich inspection output
-metatool inspect report.docx
+### `inspect`
 
-# Machine-readable inspection without Rich output mixed into stdout
-metatool inspect report.docx --format json
+Inspect one or more files or directories.
 
-# Inspect a directory and exclude exact directory names
+```powershell
+metatool inspect report.docx notes.pdf
+metatool inspect documents --recursive
 metatool inspect documents --recursive --exclude results --exclude .git
+```
 
-# Preview deterministic privacy changes without writing an output
-metatool sanitize report.docx --profile privacy --dry-run
+Options:
 
-# Create a separate validated output document
-metatool sanitize report.docx --profile privacy --output report-clean.docx
+- `--recursive` scans nested directories.
+- `--exclude NAME` skips directories whose exact name matches `NAME`.
+- `--format table` renders Rich output (the default).
+- `--format json` emits machine-readable JSON without presentation output.
+- `--fail-on info|notice|suspicious` exits with code `1` when that severity is found.
+- `--quiet` disables interactive progress output.
 
-# Replace identity fields explicitly
+### `sanitize`
+
+Sanitize one or more supported documents.
+
+```powershell
+metatool sanitize report.docx --profile privacy
+metatool sanitize report.docx --profile minimal --output clean.docx
 metatool sanitize report.docx --profile author --author "Jane Doe"
+metatool sanitize report.docx --profile privacy --dry-run
+```
 
-# Verify structural integrity after sanitization
+`--dry-run` calculates and displays the metadata diff without writing the
+destination file. Use `--output` when an explicit destination is required.
+
+### `validate`
+
+Reopen a document and check its package or PDF structure.
+
+```powershell
 metatool validate report-clean.docx
+metatool validate report-clean.pdf
+```
 
-# Launch the optional Textual interface
+### `tui`
+
+Launch the optional Textual interface:
+
+```powershell
 metatool tui
 ```
 
-Exit codes are predictable: `0` success, `1` findings exceeded `--fail-on`,
-`2` invalid arguments, `3` inspection failure, `4` sanitization failure, and
-`5` validation failure.
+The interface uses the same inspection, sanitization, and validation services as
+the CLI.
 
 ## Sanitization profiles
 
-- `privacy` removes creator, last-modified-by, company, manager, and custom
-  properties while preserving descriptive fields such as title and keywords.
-- `minimal` removes optional core metadata, selected extended properties, and
-  custom properties while preserving OOXML package validity.
-- `author` replaces creator and last-modified-by with the required `--author`
-  value, and removes company, manager, and custom properties.
+| Profile | Behavior |
+| --- | --- |
+| `privacy` | Removes identity-related fields, company/manager values, and custom properties while preserving descriptive fields such as title and keywords. |
+| `minimal` | Removes optional metadata as broadly as possible while preserving package validity. |
+| `author` | Replaces creator and last-modified-by with `--author`, then removes company, manager, and custom properties. |
 
-Sanitization never fabricates timestamps, revision counts, author histories, or
-random metadata. Outputs are written to a temporary sibling file, validated,
-then atomically moved into place. The source document is never overwritten.
+Sanitization is deterministic. MetaTool does not invent timestamps, revision
+counts, author histories, or random replacement values.
 
-## Development phases
+## Supported formats
 
-### Phase 1: correctness
+| Format | Inspection | Sanitization | Validation |
+| --- | :---: | :---: | :---: |
+| DOCX | Yes | Yes | Yes |
+| XLSX | Yes | Yes | Yes |
+| PPTX | Yes | Yes | Yes |
+| PDF | Yes | Yes | Yes |
 
-The OOXML package layer performs namespace-aware XML edits, preserves unrelated
-properties, removes custom-property relationships and content-type overrides,
-enforces archive and custom-property-count limits, validates output, and uses
-atomic writes. PDF inspection limits file and raw XMP stream sizes; PDF metadata
-and XMP removal also uses validated atomic output.
+OOXML formats share one package implementation for core, application, custom
+properties, relationships, and content-type declarations.
 
-### Phase 2: tests
+## Safety and privacy
 
-Pytest fixtures cover metadata preservation, custom-property cleanup,
-determinism, malformed OOXML XML, archive and PDF resource limits, encrypted
-PDFs, PDF metadata removal, and output validation.
+Inputs are treated as untrusted files.
 
-### Phase 3: core architecture
+- OOXML archive size, entry count, uncompressed size, compression ratio, XML
+  size, and custom-property count are bounded.
+- PDF file size and raw XMP stream size are bounded.
+- Encrypted, malformed, or structurally invalid inputs produce controlled
+  errors instead of normal-operation stack traces.
+- Sanitization writes to a temporary sibling, validates the result, and then
+  performs an atomic move.
+- Package relationships and content-type declarations are updated when OOXML
+  parts are removed.
 
-Immutable models, scanners, sanitizers, validators, and independently testable
-rules are separated from presentation. Core modules do not import Typer, Rich,
-or Textual.
+These protections reduce parser and archive abuse risk; they do not make an
+untrusted document safe to open in a vulnerable desktop application.
 
-### Phase 4: CLI and automation
+## Automation
 
-Typer routes `inspect`, `sanitize`, `validate`, and `tui`. Rich renders
-human-facing tables, panels, and sanitization diffs. JSON output is versioned
-and remains pure for automation.
+JSON output is intended for scripts and CI:
 
-### Phase 5: packaging and quality
+```powershell
+metatool inspect report.docx --format json > inspection.json
+```
 
-`pyproject.toml` defines package metadata, dependencies, the `metatool` console
-script, Ruff, mypy, and pytest settings. GitHub Actions tests Python 3.10–3.13.
+Rich progress and presentation output are kept out of JSON mode. Exit codes:
 
-### Phase 6: TUI
+| Code | Meaning |
+| ---: | --- |
+| `0` | Operation completed successfully. |
+| `1` | Findings exceeded the requested threshold. |
+| `2` | Invalid arguments or unsupported input selection. |
+| `3` | Inspection or parsing failure. |
+| `4` | Sanitization failure. |
+| `5` | Validation failure. |
 
-The optional Textual app delegates inspection, privacy sanitization, and
-validation to the same core APIs as the CLI. Each workflow runs in a worker so
-the event loop remains responsive.
+## Development
 
-### Phase 7: OOXML expansion
+Install the development extras, then run the quality gates from the repository
+root:
 
-The shared OOXML implementation selects `.docx`, `.xlsx`, and `.pptx` by
-extension; all use the same package metadata parts and validation rules.
-
-## Quality checks
-
-```bash
-pytest
+```powershell
+python -m pytest -q
 ruff check .
 ruff format --check .
 mypy metatool
 ```
 
-## Scope and limitations
+The project keeps core document processing independent from Typer, Rich, and
+Textual presentation layers. The GitHub Actions workflow exercises the
+supported Python versions and the same quality checks.
+
+## Limitations
 
 MetaTool operates on file-level metadata and package relationships. It does not
 alter document body content, recover authorship facts, or remove every possible
