@@ -32,6 +32,24 @@ from metatool.models import (
     SanitizationResult,
 )
 
+EXTENDED_METADATA_FIELDS = (
+    "Application",
+    "Company",
+    "Manager",
+    "Template",
+    "TotalTime",
+    "Pages",
+    "Words",
+    "Characters",
+    "Lines",
+    "Paragraphs",
+    "Slides",
+    "Notes",
+    "HiddenSlides",
+    "MMClips",
+    "ScaleCrop",
+)
+
 
 def _qualified_name(namespace: str, local_name: str) -> str:
     return f"{{{namespace}}}{local_name}"
@@ -228,21 +246,25 @@ class OOXMLSanitizer:
 
     def _apply_privacy_profile(self, package: OOXMLPackage) -> list[SanitizationChange]:
         changes = self._modify_core_properties(
-            package, ("creator", "lastModifiedBy", "description"), None
+            package,
+            (
+                "creator",
+                "lastModifiedBy",
+                "description",
+                "revision",
+                "created",
+                "modified",
+                "category",
+            ),
+            None,
         )
-        changes.extend(
-            self._remove_extended_properties(package, ("Application", "Company", "Manager"))
-        )
+        changes.extend(self._remove_extended_properties(package, EXTENDED_METADATA_FIELDS))
         changes.extend(self._remove_custom_properties(package))
         return changes
 
     def _apply_minimal_profile(self, package: OOXMLPackage) -> list[SanitizationChange]:
         changes = self._remove_all_core_properties(package)
-        changes.extend(
-            self._remove_extended_properties(
-                package, ("Application", "Company", "Manager", "Template", "TotalTime")
-            )
-        )
+        changes.extend(self._remove_extended_properties(package, EXTENDED_METADATA_FIELDS))
         changes.extend(self._remove_custom_properties(package))
         return changes
 
@@ -252,10 +274,12 @@ class OOXMLSanitizer:
         if author is None or not author.strip():
             raise SanitizationError("the author profile requires a non-empty author")
         changes = self._modify_core_properties(package, ("creator", "lastModifiedBy"), author)
-        changes.extend(self._modify_core_properties(package, ("description",), None))
         changes.extend(
-            self._remove_extended_properties(package, ("Application", "Company", "Manager"))
+            self._modify_core_properties(
+                package, ("description", "revision", "created", "modified", "category"), None
+            )
         )
+        changes.extend(self._remove_extended_properties(package, EXTENDED_METADATA_FIELDS))
         changes.extend(self._remove_custom_properties(package))
         return changes
 
@@ -270,6 +294,10 @@ class OOXMLSanitizer:
             "creator": CORE_NAMESPACES["dc"],
             "lastModifiedBy": CORE_NAMESPACES["cp"],
             "description": CORE_NAMESPACES["dc"],
+            "revision": CORE_NAMESPACES["cp"],
+            "created": CORE_NAMESPACES["dcterms"],
+            "modified": CORE_NAMESPACES["dcterms"],
+            "category": CORE_NAMESPACES["cp"],
         }
         changes: list[SanitizationChange] = []
         for property_name in property_names:

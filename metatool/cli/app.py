@@ -106,7 +106,8 @@ def sanitize(
     if output is not None and len(document_paths) != 1:
         render_error("--output requires exactly one input document", console)
         raise typer.Exit(code=2)
-    sanitization_options = SanitizationOptions(profile=profile, author=author)
+    effective_profile = "author" if author is not None else profile
+    sanitization_options = SanitizationOptions(profile=effective_profile, author=author)
     try:
         for document_path in document_paths:
             if dry_run:
