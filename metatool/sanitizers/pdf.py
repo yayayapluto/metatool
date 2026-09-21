@@ -14,6 +14,7 @@ from metatool.models import (
     SanitizationOptions,
     SanitizationResult,
 )
+from metatool.pdf_limits import MAX_PDF_FILE_SIZE
 
 
 class PDFSanitizer:
@@ -24,13 +25,12 @@ class PDFSanitizer:
         return document_path.suffix.lower() == PDF_EXTENSION
 
     def sanitize(
-        self,
-        source_path: Path,
-        destination_path: Path,
-        sanitization_options: SanitizationOptions,
+        self, source_path: Path, destination_path: Path, sanitization_options: SanitizationOptions
     ) -> SanitizationResult:
         """Sanitize into a validated temporary PDF then atomically replace destination."""
         self._validate_destination(source_path, destination_path, sanitization_options)
+        if source_path.stat().st_size > MAX_PDF_FILE_SIZE:
+            raise SanitizationError("PDF input exceeds the configured size limit")
         temporary_output_path = self._create_temporary_output_path(destination_path)
         try:
             changes = self._sanitize_to_temporary_output(
@@ -53,10 +53,7 @@ class PDFSanitizer:
         )
 
     def _validate_destination(
-        self,
-        source_path: Path,
-        destination_path: Path,
-        sanitization_options: SanitizationOptions,
+        self, source_path: Path, destination_path: Path, sanitization_options: SanitizationOptions
     ) -> None:
         if source_path.resolve() == destination_path.resolve():
             raise SanitizationError("source and destination must be different paths")

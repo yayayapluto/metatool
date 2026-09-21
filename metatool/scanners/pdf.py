@@ -7,6 +7,7 @@ import pikepdf
 from metatool.constants import PDF_EXTENSION
 from metatool.exceptions import InvalidDocumentError, UnsupportedFormatError
 from metatool.models import InspectionResult, MetadataValue
+from metatool.pdf_limits import MAX_PDF_FILE_SIZE
 from metatool.rules.pdf import PDFMetadataRules
 
 
@@ -21,6 +22,8 @@ class PDFScanner:
         """Inspect PDF metadata without modifying the input document."""
         if not self.supports(document_path):
             raise UnsupportedFormatError(f"unsupported PDF format: {document_path.suffix}")
+        if document_path.stat().st_size > MAX_PDF_FILE_SIZE:
+            raise InvalidDocumentError("PDF input exceeds the configured size limit")
         metadata = self._extract_metadata(document_path)
         return InspectionResult(
             path=str(document_path),
@@ -44,11 +47,7 @@ class PDFScanner:
             raise InvalidDocumentError(f"{document_path} is encrypted") from exception
         except pikepdf.PdfError as exception:
             raise InvalidDocumentError(f"{document_path} is not a valid PDF") from exception
-        return {
-            field_name: field_value
-            for field_name, field_value in metadata.items()
-            if field_value is not None
-        }
+        return {field_name: value for field_name, value in metadata.items() if value is not None}
 
 
 def _read_document_info(pdf_document: pikepdf.Pdf, key: str) -> str | None:
