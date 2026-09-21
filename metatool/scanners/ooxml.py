@@ -16,6 +16,11 @@ from metatool.models import InspectionResult, MetadataValue
 from metatool.rules.ooxml import OOXMLMetadataRules
 from metatool.sanitizers.ooxml import OOXMLPackage
 
+MAX_CUSTOM_PROPERTIES = 1_000
+CUSTOM_PROPERTIES_NAMESPACE = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"
+)
+
 
 class OOXMLScanner:
     """Extract normalized OOXML metadata from DOCX, XLSX, and PPTX packages."""
@@ -30,12 +35,11 @@ class OOXMLScanner:
             raise UnsupportedFormatError(f"unsupported OOXML format: {document_path.suffix}")
         package = OOXMLPackage.read(document_path)
         metadata, warnings = self._extract_metadata(package)
-        findings = OOXMLMetadataRules().evaluate(metadata)
         return InspectionResult(
             path=str(document_path),
             file_format=document_path.suffix.lower().removeprefix("."),
             metadata=metadata,
-            findings=findings,
+            findings=OOXMLMetadataRules().evaluate(metadata),
             warnings=warnings,
         )
 
@@ -46,9 +50,19 @@ class OOXMLScanner:
             "has_custom_properties": CUSTOM_PROPERTIES_PART in package.parts,
         }
         warnings: list[str] = []
+        self._validate_custom_property_count(package)
         self._extract_core_properties(package, metadata, warnings)
         self._extract_extended_properties(package, metadata, warnings)
         return metadata, warnings
+
+    def _validate_custom_property_count(self, package: OOXMLPackage) -> None:
+        custom_property_bytes = package.parts.get(CUSTOM_PROPERTIES_PART)
+        if custom_property_bytes is None:
+            return
+        custom_properties = _parse_xml(CUSTOM_PROPERTIES_PART, custom_property_bytes)
+        property_name = f"{{{CUSTOM_PROPERTIES_NAMESPACE}}}property"
+        if len(custom_properties.findall(property_name)) > MAX_CUSTOM_PROPERTIES:
+            raise InvalidDocumentError("OOXML custom property count exceeds the configured limit")
 
     def _extract_core_properties(
         self, package: OOXMLPackage, metadata: dict[str, MetadataValue], warnings: list[str]
