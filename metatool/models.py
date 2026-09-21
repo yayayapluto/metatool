@@ -1,12 +1,12 @@
 """Shared immutable domain models."""
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 
 MetadataValue = str | int | float | bool | None
 
 
-class Severity(StrEnum):
+class Severity(str, Enum):
     """Evidence-oriented finding severity."""
 
     INFO = "info"
@@ -14,7 +14,7 @@ class Severity(StrEnum):
     SUSPICIOUS = "suspicious"
 
 
-class SanitizationAction(StrEnum):
+class SanitizationAction(str, Enum):
     """Explicit mutation actions reported by sanitizers."""
 
     PRESERVE = "preserve"

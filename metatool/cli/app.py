@@ -38,13 +38,11 @@ def _show_version(is_requested: bool) -> None:
 
 @app.callback()
 def configure_application(
-    version: bool = typer.Option(
-        False, "--version", callback=_show_version, is_eager=True, help="Show the MetaTool version."
-    ),
-    verbose: bool = typer.Option(False, "--verbose", help="Enable informational diagnostics."),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress non-essential output."),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug diagnostics."),
-    no_color: bool = typer.Option(False, "--no-color", help="Disable color output."),
+    version: bool = typer.Option(False, "--version", callback=_show_version, is_eager=True),
+    verbose: bool = typer.Option(False, "--verbose"),
+    quiet: bool = typer.Option(False, "--quiet"),
+    debug: bool = typer.Option(False, "--debug"),
+    no_color: bool = typer.Option(False, "--no-color"),
 ) -> None:
     """Configure global diagnostic and rendering options."""
     if quiet:
@@ -67,7 +65,7 @@ def inspect(
 ) -> None:
     """Inspect document metadata and render evidence-based findings."""
     document_paths = collect_input_paths(paths, recursive, tuple(exclude))
-    inspection_results = _inspect_paths(document_paths)
+    inspection_results = _inspect_paths(document_paths, output_format)
     if output_format == "json":
         typer.echo(render_json_inspections(inspection_results))
     elif output_format == "table":
@@ -139,12 +137,15 @@ def tui() -> None:
     MetaToolApp().run()
 
 
-def _inspect_paths(document_paths: list[Path]) -> list[InspectionResult]:
+def _inspect_paths(document_paths: list[Path], output_format: str) -> list[InspectionResult]:
     inspection_results: list[InspectionResult] = []
     for document_path in document_paths:
         try:
             inspection_results.append(inspect_document(document_path))
         except MetaToolError as exception:
-            render_error(str(exception), console)
+            if output_format == "json":
+                typer.echo("[]")
+            else:
+                render_error(str(exception), console)
             raise typer.Exit(code=3) from exception
     return inspection_results
