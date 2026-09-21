@@ -61,8 +61,11 @@ source .venv/bin/activate
 python -m pip install -e ".[dev,tui]"
 ```
 
-Do not use `--break-system-packages` for normal installation. If an old
-installation was created from the public package index, remove it first:
+Do not use `--break-system-packages` for normal installation. If source code
+changes after installation, refresh the isolated command with `pipx uninstall
+metatool` followed by `pipx install .`; an existing pipx environment does not
+update itself. If an old installation was created from the public package index,
+remove it first:
 
 ```powershell
 pipx uninstall metatool
