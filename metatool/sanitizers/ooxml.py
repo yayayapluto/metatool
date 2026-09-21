@@ -1,11 +1,12 @@
 """Safe, deterministic OOXML sanitization."""
 
 import os
+import posixpath
 import tempfile
 import xml.etree.ElementTree as element_tree
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from metatool.constants import (
     CONTENT_TYPES_NAMESPACE,
@@ -40,6 +41,26 @@ def _serialize_xml(root: element_tree.Element) -> bytes:
     return element_tree.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
+def _relationship_source_part(relationship_part_name: str) -> str:
+    if relationship_part_name == ROOT_RELATIONSHIPS_PART:
+        return ""
+    relationship_path = PurePosixPath(relationship_part_name)
+    if relationship_path.parent.name != "_rels" or not relationship_path.name.endswith(".rels"):
+        raise ValueError(f"invalid OOXML relationship part: {relationship_part_name}")
+    return str(relationship_path.parent.parent / relationship_path.name.removesuffix(".rels"))
+
+
+def _resolve_relationship_target(relationship_part_name: str, target: str) -> str:
+    if target.startswith("/"):
+        return target.removeprefix("/")
+    source_part_name = _relationship_source_part(relationship_part_name)
+    target_directory = posixpath.dirname(source_part_name)
+    resolved_target = posixpath.normpath(posixpath.join(target_directory, target))
+    if resolved_target == ".." or resolved_target.startswith("../"):
+        raise ValueError(f"OOXML relationship target escapes package: {target}")
+    return resolved_target.removeprefix("./")
+
+
 def _validate_archive_members(package_archive: zipfile.ZipFile) -> None:
     package_members = package_archive.infolist()
     if len(package_members) > MAX_ARCHIVE_MEMBERS:
@@ -48,7 +69,10 @@ def _validate_archive_members(package_archive: zipfile.ZipFile) -> None:
     if uncompressed_size > MAX_ARCHIVE_SIZE:
         raise InvalidDocumentError("OOXML archive exceeds the uncompressed size limit")
     for package_member in package_members:
-        if package_member.filename.startswith("/") or ".." in Path(package_member.filename).parts:
+        if (
+            package_member.filename.startswith("/")
+            or ".." in PurePosixPath(package_member.filename).parts
+        ):
             raise InvalidDocumentError("OOXML archive contains an unsafe member path")
         if (
             package_member.compress_size
@@ -59,13 +83,13 @@ def _validate_archive_members(package_archive: zipfile.ZipFile) -> None:
 
 @dataclass
 class OOXMLPackage:
-    """An in-memory OOXML package with relationship-aware part removal."""
+    """In-memory OOXML package with relationship-aware part removal."""
 
     parts: dict[str, bytes]
 
     @classmethod
     def read(cls, document_path: Path) -> "OOXMLPackage":
-        """Read an OOXML archive after enforcing resource limits."""
+        """Read an OOXML archive after resource-limit validation."""
         try:
             with zipfile.ZipFile(document_path) as package_archive:
                 _validate_archive_members(package_archive)
@@ -80,65 +104,72 @@ class OOXMLPackage:
         return cls(parts=parts)
 
     def replace_part(self, part_name: str, document_bytes: bytes) -> None:
-        """Replace a package part with the supplied bytes."""
+        """Replace a package part with supplied bytes."""
         self.parts[part_name] = document_bytes
 
     def remove_part(self, part_name: str) -> None:
-        """Remove a part and all root relationship and content type references to it."""
+        """Remove a part plus all relationship and content-type references."""
         self.parts.pop(part_name, None)
         self._remove_relationship_references(part_name)
         self._remove_content_type_references(part_name)
 
-    def _remove_relationship_references(self, part_name: str) -> None:
-        relationship_bytes = self.parts.get(ROOT_RELATIONSHIPS_PART)
-        if relationship_bytes is None:
-            return
-        relationships = element_tree.fromstring(relationship_bytes)
+    def _remove_relationship_references(self, removed_part_name: str) -> None:
         relationship_name = _qualified_name(RELATIONSHIPS_NAMESPACE, "Relationship")
-        target_part_name = part_name.removeprefix("/")
-        for relationship in list(relationships.findall(relationship_name)):
-            if relationship.get("Target", "").lstrip("/") == target_part_name:
-                relationships.remove(relationship)
-        self.parts[ROOT_RELATIONSHIPS_PART] = _serialize_xml(relationships)
+        for relationship_part_name in self._relationship_part_names():
+            relationships = element_tree.fromstring(self.parts[relationship_part_name])
+            for relationship in list(relationships.findall(relationship_name)):
+                if relationship.get("TargetMode") == "External":
+                    continue
+                relationship_target = _resolve_relationship_target(
+                    relationship_part_name, relationship.get("Target", "")
+                )
+                if relationship_target == removed_part_name:
+                    relationships.remove(relationship)
+            self.parts[relationship_part_name] = _serialize_xml(relationships)
 
-    def _remove_content_type_references(self, part_name: str) -> None:
+    def _remove_content_type_references(self, removed_part_name: str) -> None:
         content_type_bytes = self.parts.get(CONTENT_TYPES_PART)
         if content_type_bytes is None:
             return
         content_types = element_tree.fromstring(content_type_bytes)
         override_name = _qualified_name(CONTENT_TYPES_NAMESPACE, "Override")
-        target_part_name = f"/{part_name.removeprefix('/')}"
+        expected_part_name = f"/{removed_part_name.removeprefix('/')}"
         for content_type in list(content_types.findall(override_name)):
-            if content_type.get("PartName") == target_part_name:
+            if content_type.get("PartName") == expected_part_name:
                 content_types.remove(content_type)
         self.parts[CONTENT_TYPES_PART] = _serialize_xml(content_types)
 
     def validate(self) -> None:
-        """Validate package members and XML parts after modification."""
+        """Validate members, XML parts, and every internal relationship target."""
         if CONTENT_TYPES_PART not in self.parts:
             raise ValueError("OOXML package is missing [Content_Types].xml")
         for part_name, document_bytes in self.parts.items():
-            if part_name.endswith(".xml"):
-                if len(document_bytes) > MAX_XML_SIZE:
-                    raise ValueError(f"OOXML XML part exceeds size limit: {part_name}")
-                element_tree.fromstring(document_bytes)
+            if not part_name.endswith(".xml") and not part_name.endswith(".rels"):
+                continue
+            if len(document_bytes) > MAX_XML_SIZE:
+                raise ValueError(f"OOXML XML part exceeds size limit: {part_name}")
+            element_tree.fromstring(document_bytes)
         self._validate_relationship_targets()
 
+    def _relationship_part_names(self) -> list[str]:
+        return [part_name for part_name in self.parts if part_name.endswith(".rels")]
+
     def _validate_relationship_targets(self) -> None:
-        relationship_bytes = self.parts.get(ROOT_RELATIONSHIPS_PART)
-        if relationship_bytes is None:
-            return
-        relationships = element_tree.fromstring(relationship_bytes)
         relationship_name = _qualified_name(RELATIONSHIPS_NAMESPACE, "Relationship")
-        for relationship in relationships.findall(relationship_name):
-            if relationship.get("TargetMode") == "External":
-                continue
-            target_name = relationship.get("Target", "").lstrip("/")
-            if target_name and target_name not in self.parts:
-                raise ValueError(f"OOXML relationship target is missing: {target_name}")
+        for relationship_part_name in self._relationship_part_names():
+            relationships = element_tree.fromstring(self.parts[relationship_part_name])
+            for relationship in relationships.findall(relationship_name):
+                if relationship.get("TargetMode") == "External":
+                    continue
+                target = relationship.get("Target", "")
+                if not target:
+                    raise ValueError(f"OOXML relationship has no target: {relationship_part_name}")
+                target_part_name = _resolve_relationship_target(relationship_part_name, target)
+                if target_part_name not in self.parts:
+                    raise ValueError(f"OOXML relationship target is missing: {target_part_name}")
 
     def write(self, destination_path: Path) -> None:
-        """Write the package without extracting untrusted archive paths."""
+        """Write members without extracting untrusted archive paths."""
         with zipfile.ZipFile(destination_path, "w", zipfile.ZIP_DEFLATED) as package_archive:
             for part_name in sorted(self.parts):
                 package_archive.writestr(part_name, self.parts[part_name])
@@ -157,10 +188,10 @@ class OOXMLSanitizer:
         destination_path: Path,
         sanitization_options: SanitizationOptions,
     ) -> SanitizationResult:
-        """Sanitize into a validated temporary file then atomically replace the destination."""
+        """Sanitize into a validated temporary file then atomically replace destination."""
         self._validate_destination(source_path, destination_path, sanitization_options)
         package = OOXMLPackage.read(source_path)
-        sanitization_changes = self._sanitize_package(package, sanitization_options)
+        changes = self._sanitize_package(package, sanitization_options)
         package.validate()
         self._write_validated_output(
             package, destination_path, sanitization_options.validate_output
@@ -169,7 +200,7 @@ class OOXMLSanitizer:
             source=str(source_path),
             destination=str(destination_path),
             profile=sanitization_options.profile,
-            changes=sanitization_changes,
+            changes=changes,
         )
 
     def _validate_destination(
@@ -196,7 +227,7 @@ class OOXMLSanitizer:
         raise SanitizationError(f"unknown sanitization profile: {sanitization_options.profile}")
 
     def _apply_privacy_profile(self, package: OOXMLPackage) -> list[SanitizationChange]:
-        changes = self._remove_core_properties(package, ("creator", "lastModifiedBy"))
+        changes = self._modify_core_properties(package, ("creator", "lastModifiedBy"), None)
         changes.extend(self._remove_extended_properties(package, ("Company", "Manager")))
         changes.extend(self._remove_custom_properties(package))
         return changes
@@ -216,20 +247,10 @@ class OOXMLSanitizer:
     ) -> list[SanitizationChange]:
         if author is None or not author.strip():
             raise SanitizationError("the author profile requires a non-empty author")
-        changes = self._replace_core_properties(package, ("creator", "lastModifiedBy"), author)
+        changes = self._modify_core_properties(package, ("creator", "lastModifiedBy"), author)
         changes.extend(self._remove_extended_properties(package, ("Company", "Manager")))
         changes.extend(self._remove_custom_properties(package))
         return changes
-
-    def _remove_core_properties(
-        self, package: OOXMLPackage, property_names: tuple[str, ...]
-    ) -> list[SanitizationChange]:
-        return self._modify_core_properties(package, property_names, None)
-
-    def _replace_core_properties(
-        self, package: OOXMLPackage, property_names: tuple[str, ...], replacement: str
-    ) -> list[SanitizationChange]:
-        return self._modify_core_properties(package, property_names, replacement)
 
     def _modify_core_properties(
         self, package: OOXMLPackage, property_names: tuple[str, ...], replacement: str | None
@@ -238,14 +259,11 @@ class OOXMLSanitizer:
         if core_property_bytes is None:
             return []
         core_properties = element_tree.fromstring(core_property_bytes)
-        namespace_by_property = {
-            "creator": CORE_NAMESPACES["dc"],
-            "lastModifiedBy": CORE_NAMESPACES["cp"],
-        }
+        namespaces = {"creator": CORE_NAMESPACES["dc"], "lastModifiedBy": CORE_NAMESPACES["cp"]}
         changes: list[SanitizationChange] = []
         for property_name in property_names:
             property_element = core_properties.find(
-                _qualified_name(namespace_by_property[property_name], property_name)
+                _qualified_name(namespaces[property_name], property_name)
             )
             if property_element is None:
                 continue
@@ -266,10 +284,8 @@ class OOXMLSanitizer:
             return []
         core_properties = element_tree.fromstring(core_property_bytes)
         changes = [
-            SanitizationChange(
-                property_element.tag, property_element.text, None, SanitizationAction.REMOVE
-            )
-            for property_element in list(core_properties)
+            SanitizationChange(element.tag, element.text, None, SanitizationAction.REMOVE)
+            for element in list(core_properties)
         ]
         for property_element in list(core_properties):
             core_properties.remove(property_element)
@@ -309,11 +325,11 @@ class OOXMLSanitizer:
         self, package: OOXMLPackage, destination_path: Path, should_validate_output: bool
     ) -> None:
         destination_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_file_descriptor, temporary_file_name = tempfile.mkstemp(
+        descriptor, temporary_name = tempfile.mkstemp(
             dir=destination_path.parent, prefix=f".{destination_path.name}.", suffix=".tmp"
         )
-        os.close(temporary_file_descriptor)
-        temporary_output_path = Path(temporary_file_name)
+        os.close(descriptor)
+        temporary_output_path = Path(temporary_name)
         try:
             package.write(temporary_output_path)
             if should_validate_output:
