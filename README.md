@@ -147,9 +147,9 @@ the CLI.
 
 | Profile | Behavior |
 | --- | --- |
-| `privacy` | Removes identity-related fields, company/manager values, custom properties, and the description field while preserving descriptive fields such as title and keywords. |
-| `minimal` | Removes optional metadata as broadly as possible while preserving package validity. |
-| `author` | Replaces creator and last-modified-by with `--author`, then removes company, manager, and custom properties. |
+| `privacy` | Removes identity-related fields, application metadata, company/manager values, custom properties, and the description field while preserving descriptive fields such as title and keywords. |
+| `minimal` | Removes optional metadata, including application and description metadata, while preserving package validity. |
+| `author` | Replaces creator and last-modified-by with `--author`, then removes application, description, company, manager, and custom properties. |
 
 Sanitization is deterministic. MetaTool does not invent timestamps, revision
 counts, author histories, or random replacement values.

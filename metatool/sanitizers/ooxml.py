@@ -230,7 +230,9 @@ class OOXMLSanitizer:
         changes = self._modify_core_properties(
             package, ("creator", "lastModifiedBy", "description"), None
         )
-        changes.extend(self._remove_extended_properties(package, ("Company", "Manager")))
+        changes.extend(
+            self._remove_extended_properties(package, ("Application", "Company", "Manager"))
+        )
         changes.extend(self._remove_custom_properties(package))
         return changes
 
@@ -238,7 +240,7 @@ class OOXMLSanitizer:
         changes = self._remove_all_core_properties(package)
         changes.extend(
             self._remove_extended_properties(
-                package, ("Company", "Manager", "Template", "TotalTime")
+                package, ("Application", "Company", "Manager", "Template", "TotalTime")
             )
         )
         changes.extend(self._remove_custom_properties(package))
@@ -249,10 +251,11 @@ class OOXMLSanitizer:
     ) -> list[SanitizationChange]:
         if author is None or not author.strip():
             raise SanitizationError("the author profile requires a non-empty author")
-        changes = self._modify_core_properties(
-            package, ("creator", "lastModifiedBy", "description"), author
+        changes = self._modify_core_properties(package, ("creator", "lastModifiedBy"), author)
+        changes.extend(self._modify_core_properties(package, ("description",), None))
+        changes.extend(
+            self._remove_extended_properties(package, ("Application", "Company", "Manager"))
         )
-        changes.extend(self._remove_extended_properties(package, ("Company", "Manager")))
         changes.extend(self._remove_custom_properties(package))
         return changes
 
