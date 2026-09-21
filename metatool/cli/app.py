@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.progress import Progress
 
 from metatool.cli.render import (
     render_error,
@@ -38,6 +39,7 @@ def _show_version(is_requested: bool) -> None:
 
 @app.callback()
 def configure_application(
+    context: typer.Context,
     version: bool = typer.Option(False, "--version", callback=_show_version, is_eager=True),
     verbose: bool = typer.Option(False, "--verbose"),
     quiet: bool = typer.Option(False, "--quiet"),
@@ -45,6 +47,8 @@ def configure_application(
     no_color: bool = typer.Option(False, "--no-color"),
 ) -> None:
     """Configure global diagnostic and rendering options."""
+    context.ensure_object(dict)
+    context.obj["quiet"] = quiet
     if quiet:
         logging.disable(logging.INFO)
     if verbose:
@@ -57,6 +61,7 @@ def configure_application(
 
 @app.command()
 def inspect(
+    context: typer.Context,
     paths: list[Path] = typer.Argument(..., exists=True),
     recursive: bool = typer.Option(False, "--recursive"),
     output_format: str = typer.Option("table", "--format"),
@@ -65,7 +70,13 @@ def inspect(
 ) -> None:
     """Inspect document metadata and render evidence-based findings."""
     document_paths = collect_input_paths(paths, recursive, tuple(exclude))
-    inspection_results = _inspect_paths(document_paths, output_format)
+    show_progress = _should_show_progress(
+        output_format,
+        any(path.is_dir() for path in paths),
+        bool(context.obj.get("quiet", False)),
+        console.is_terminal,
+    )
+    inspection_results = _inspect_paths(document_paths, output_format, show_progress)
     if output_format == "json":
         typer.echo(render_json_inspections(inspection_results))
     elif output_format == "table":
@@ -137,15 +148,43 @@ def tui() -> None:
     MetaToolApp().run()
 
 
-def _inspect_paths(document_paths: list[Path], output_format: str) -> list[InspectionResult]:
+def _inspect_paths(
+    document_paths: list[Path], output_format: str, show_progress: bool = False
+) -> list[InspectionResult]:
     inspection_results: list[InspectionResult] = []
-    for document_path in document_paths:
-        try:
-            inspection_results.append(inspect_document(document_path))
-        except MetaToolError as exception:
-            if output_format == "json":
-                typer.echo("[]")
-            else:
-                render_error(str(exception), console)
-            raise typer.Exit(code=3) from exception
+    progress = Progress(console=console) if show_progress else None
+    if progress is None:
+        return _inspect_paths_without_progress(document_paths, output_format)
+    with progress:
+        task_id = progress.add_task("Inspecting documents", total=len(document_paths))
+        for document_path in document_paths:
+            inspection_results.append(_inspect_one(document_path, output_format))
+            progress.advance(task_id)
     return inspection_results
+
+
+def _inspect_paths_without_progress(
+    document_paths: list[Path], output_format: str
+) -> list[InspectionResult]:
+    return [_inspect_one(document_path, output_format) for document_path in document_paths]
+
+
+def _inspect_one(document_path: Path, output_format: str) -> InspectionResult:
+    try:
+        return inspect_document(document_path)
+    except MetaToolError as exception:
+        if output_format == "json":
+            typer.echo("[]")
+        else:
+            render_error(str(exception), console)
+        raise typer.Exit(code=3) from exception
+
+
+def _should_show_progress(
+    output_format: str,
+    has_directory_input: bool,
+    quiet: bool,
+    is_interactive: bool,
+) -> bool:
+    """Return whether a human-facing directory operation should show progress."""
+    return output_format == "table" and has_directory_input and not quiet and is_interactive
