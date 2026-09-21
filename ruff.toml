@@ -1,0 +1,8 @@
+extend = "pyproject.toml"
+
+[lint]
+ignore = ["B008"]
+
+[lint.per-file-ignores]
+"metatool/rules/ooxml.py" = ["E501"]
+"tests/test_ooxml_sanitizer.py" = ["E501"]

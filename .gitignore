@@ -1,5 +1,17 @@
 files/*
 !files/.gitkeep
+results/
+*-clean.docx
+*-clean.pdf
 __pycache__/
 *.pyc
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+metatool.egg-info/
+.private/
+.agents/
+.superpowers/
+.worktrees/
+worktrees/
