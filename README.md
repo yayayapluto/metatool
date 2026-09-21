@@ -74,13 +74,15 @@ then atomically moved into place. The source document is never overwritten.
 
 The OOXML package layer performs namespace-aware XML edits, preserves unrelated
 properties, removes custom-property relationships and content-type overrides,
-enforces archive limits, validates output, and uses atomic writes. PDF metadata
+enforces archive and custom-property-count limits, validates output, and uses
+atomic writes. PDF inspection limits file and raw XMP stream sizes; PDF metadata
 and XMP removal also uses validated atomic output.
 
 ### Phase 2: tests
 
 Pytest fixtures cover metadata preservation, custom-property cleanup,
-determinism, malformed OOXML XML, PDF metadata removal, and output validation.
+determinism, malformed OOXML XML, archive and PDF resource limits, encrypted
+PDFs, PDF metadata removal, and output validation.
 
 ### Phase 3: core architecture
 
@@ -101,8 +103,9 @@ script, Ruff, mypy, and pytest settings. GitHub Actions tests Python 3.10–3.13
 
 ### Phase 6: TUI
 
-The optional Textual app delegates inspection to the same core API as the CLI
-and uses a worker for document inspection so its event loop remains responsive.
+The optional Textual app delegates inspection, privacy sanitization, and
+validation to the same core APIs as the CLI. Each workflow runs in a worker so
+the event loop remains responsive.
 
 ### Phase 7: OOXML expansion
 
