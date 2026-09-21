@@ -227,7 +227,9 @@ class OOXMLSanitizer:
         raise SanitizationError(f"unknown sanitization profile: {sanitization_options.profile}")
 
     def _apply_privacy_profile(self, package: OOXMLPackage) -> list[SanitizationChange]:
-        changes = self._modify_core_properties(package, ("creator", "lastModifiedBy"), None)
+        changes = self._modify_core_properties(
+            package, ("creator", "lastModifiedBy", "description"), None
+        )
         changes.extend(self._remove_extended_properties(package, ("Company", "Manager")))
         changes.extend(self._remove_custom_properties(package))
         return changes
@@ -247,7 +249,9 @@ class OOXMLSanitizer:
     ) -> list[SanitizationChange]:
         if author is None or not author.strip():
             raise SanitizationError("the author profile requires a non-empty author")
-        changes = self._modify_core_properties(package, ("creator", "lastModifiedBy"), author)
+        changes = self._modify_core_properties(
+            package, ("creator", "lastModifiedBy", "description"), author
+        )
         changes.extend(self._remove_extended_properties(package, ("Company", "Manager")))
         changes.extend(self._remove_custom_properties(package))
         return changes
@@ -259,7 +263,11 @@ class OOXMLSanitizer:
         if core_property_bytes is None:
             return []
         core_properties = element_tree.fromstring(core_property_bytes)
-        namespaces = {"creator": CORE_NAMESPACES["dc"], "lastModifiedBy": CORE_NAMESPACES["cp"]}
+        namespaces = {
+            "creator": CORE_NAMESPACES["dc"],
+            "lastModifiedBy": CORE_NAMESPACES["cp"],
+            "description": CORE_NAMESPACES["dc"],
+        }
         changes: list[SanitizationChange] = []
         for property_name in property_names:
             property_element = core_properties.find(

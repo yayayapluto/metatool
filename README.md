@@ -147,7 +147,7 @@ the CLI.
 
 | Profile | Behavior |
 | --- | --- |
-| `privacy` | Removes identity-related fields, company/manager values, and custom properties while preserving descriptive fields such as title and keywords. |
+| `privacy` | Removes identity-related fields, company/manager values, custom properties, and the description field while preserving descriptive fields such as title and keywords. |
 | `minimal` | Removes optional metadata as broadly as possible while preserving package validity. |
 | `author` | Replaces creator and last-modified-by with `--author`, then removes company, manager, and custom properties. |
 
